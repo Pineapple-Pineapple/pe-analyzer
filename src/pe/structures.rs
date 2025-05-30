@@ -2,8 +2,8 @@
 
 use crate::error::{PeError, Result};
 use crate::utils::BinaryReader;
-use std::fmt;
 
+#[derive(Debug)]
 pub struct DosHeader {
   pub e_magic: u16,      // Magic number
   pub e_cblp: u16,       // Bytes on last page of file
@@ -25,6 +25,8 @@ pub struct DosHeader {
   pub e_res2: [u16; 10], // Reserved words
   pub e_lfanew: i32,     // File address of new exe header
 }
+
+// SKIP: DOS STUB
 
 impl DosHeader {
   pub const SIZE: usize = 64;
@@ -76,26 +78,32 @@ impl DosHeader {
   }
 }
 
-impl fmt::Display for DosHeader {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    writeln!(f, "DOS Header:")?;
-    writeln!(f, "  Magic Number (e_magic):          0x{:04X}", self.e_magic)?;
-    writeln!(f, "  Bytes on last page (e_cblp):     {}", self.e_cblp)?;
-    writeln!(f, "  Pages in file (e_cp):            {}", self.e_cp)?;
-    writeln!(f, "  Relocations (e_crlc):            {}", self.e_crlc)?;
-    writeln!(f, "  Header size in paragraphs:       {}", self.e_cparhdr)?;
-    writeln!(f, "  Min extra paragraphs needed:     {}", self.e_minalloc)?;
-    writeln!(f, "  Max extra paragraphs needed:     {}", self.e_maxalloc)?;
-    writeln!(f, "  Initial SS value (e_ss):         0x{:04X}", self.e_ss)?;
-    writeln!(f, "  Initial SP value (e_sp):         0x{:04X}", self.e_sp)?;
-    writeln!(f, "  Checksum (e_csum):               0x{:04X}", self.e_csum)?;
-    writeln!(f, "  Initial IP value (e_ip):         0x{:04X}", self.e_ip)?;
-    writeln!(f, "  Initial CS value (e_cs):         0x{:04X}", self.e_cs)?;
-    writeln!(f, "  Relocation table address:        0x{:04X}", self.e_lfarlc)?;
-    writeln!(f, "  Overlay number (e_ovno):         {}", self.e_ovno)?;
-    writeln!(f, "  OEM identifier (e_oemid):        0x{:04X}", self.e_oemid)?;
-    writeln!(f, "  OEM information (e_oeminfo):     0x{:04X}", self.e_oeminfo)?;
-    writeln!(f, "  New EXE header address:          0x{:08X}", self.e_lfanew)?;
-    Ok(())
+// SKIP: IMAGE_NT_HEADER(32)(64) - Signature checked in parser
+
+// IMAGE_FILE_HEADER
+#[derive(Debug)]
+pub struct CoffHeader {
+  pub machine: u16,
+  pub number_of_sections: u16,
+  pub time_date_stamp: u32,
+  pub pointer_to_symbol_table: u32,
+  pub number_of_symbols: u32,
+  pub size_of_optional_header: u16,
+  pub characteristics: u16
+}
+
+impl CoffHeader {
+  pub fn parse(data: &[u8]) -> Result<Self> {
+    let mut reader = BinaryReader::new(data);
+
+    Ok(CoffHeader {
+      machine: reader.read_u16()?,
+      number_of_sections: reader.read_u16()?,
+      time_date_stamp: reader.read_u32()?,
+      pointer_to_symbol_table: reader.read_u32()?,
+      number_of_symbols: reader.read_u32()?,
+      size_of_optional_header: reader.read_u16()?,
+      characteristics: reader.read_u16()?
+    })
   }
 }

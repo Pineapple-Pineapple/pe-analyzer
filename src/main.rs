@@ -33,8 +33,7 @@ fn main() {
 
 fn run(args: Args) -> Result<(), PeError> {
   if args.verbose {
-    println!("Verbose mode enabled");
-    println!();
+    println!("Verbose mode");
   }
 
   Cli::run(args)?;
