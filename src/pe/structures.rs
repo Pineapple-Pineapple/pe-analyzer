@@ -34,13 +34,13 @@ impl DosHeader {
   pub fn parse(data: &[u8]) -> Result<Self> {
     let mut reader = BinaryReader::new(data);
 
+    if data.len() < Self::SIZE {
+      return Err(PeError::InvalidHeader("DOS header too small".to_string()));
+    }
+
     let e_magic = reader.read_u16()?;
     if e_magic != 0x5A4D {
       return Err(PeError::NotPeFile);
-    }
-
-    if data.len() < Self::SIZE {
-      return Err(PeError::InvalidHeader("DOS header too small".to_string()));
     }
 
     Ok(DosHeader {
@@ -93,6 +93,22 @@ pub struct CoffHeader {
 }
 
 impl CoffHeader {
+  const IMAGE_FILE_RELOCS_STRIPPED: u16 = 0x0001;
+  const IMAGE_FILE_EXECUTABLE_IMAGE: u16 = 0x0002;
+  const IMAGE_FILE_LINE_NUMS_STRIPPED: u16 = 0x0004;
+  const IMAGE_FILE_LOCAL_SYMS_STRIPPED: u16 = 0x0008;
+  const IMAGE_FILE_AGGRESSIVE_WS_TRIM: u16 = 0x0010;
+  const IMAGE_FILE_LARGE_ADDRESS_AWARE: u16 = 0x0020;
+  const IMAGE_FILE_BYTES_REVERSED_LO: u16 = 0x0080;
+  const IMAGE_FILE_32BIT_MACHINE: u16 = 0x0100;
+  const IMAGE_FILE_DEBUG_STRIPPED: u16 = 0x0200;
+  const IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP: u16 = 0x0400;
+  const IMAGE_FILE_NET_RUN_FROM_SWAP: u16 = 0x0800;
+  const IMAGE_FILE_SYSTEM: u16 = 0x1000;
+  const IMAGE_FILE_DLL: u16 = 0x2000;
+  const IMAGE_FILE_UP_SYSTEM_ONLY: u16 = 0x4000;
+  const IMAGE_FILE_BYTES_REVERSED_HI: u16 = 0x8000;
+
   pub fn parse(data: &[u8]) -> Result<Self> {
     let mut reader = BinaryReader::new(data);
 
@@ -105,5 +121,97 @@ impl CoffHeader {
       size_of_optional_header: reader.read_u16()?,
       characteristics: reader.read_u16()?
     })
+  }
+
+  pub fn machine_type(self) -> String {
+    // TODO: Add other archs
+    match self.machine {
+      0x0 => "Unknown".into(),
+      0x8664 => "x64".into(),
+      0x14c => "i386".into(),
+      other => format!("Unimplemented: {:0X}", other)
+    }
+  }
+
+  // TODO: Add more readable names (as argument?)
+  pub fn characteristics(&self) -> Vec<&str> {
+    let mut flags = Vec::new();
+    
+    if self.characteristics & Self::IMAGE_FILE_RELOCS_STRIPPED != 0 {
+      flags.push("RELOCS_STRIPPED");
+    }
+    if self.characteristics & Self::IMAGE_FILE_EXECUTABLE_IMAGE != 0 {
+      flags.push("EXECUTABLE_IMAGE");
+    }
+    if self.characteristics & Self::IMAGE_FILE_LINE_NUMS_STRIPPED != 0 {
+      flags.push("LINE_NUMS_STRIPPED");
+    }
+    if self.characteristics & Self::IMAGE_FILE_LOCAL_SYMS_STRIPPED != 0 {
+      flags.push("LOCAL_SYMS_STRIPPED");
+    }
+    if self.characteristics & Self::IMAGE_FILE_AGGRESSIVE_WS_TRIM != 0 {
+      flags.push("AGGRESSIVE_WS_TRIM");
+    }
+    if self.characteristics & Self::IMAGE_FILE_LARGE_ADDRESS_AWARE != 0 {
+      flags.push("LARGE_ADDRESS_AWARE");
+    }
+    if self.characteristics & Self::IMAGE_FILE_BYTES_REVERSED_LO != 0 {
+      flags.push("BYTES_REVERSED_LO");
+    }
+    if self.characteristics & Self::IMAGE_FILE_32BIT_MACHINE != 0 {
+      flags.push("32BIT_MACHINE");
+    }
+    if self.characteristics & Self::IMAGE_FILE_DEBUG_STRIPPED != 0 {
+      flags.push("DEBUG_STRIPPED");
+    }
+    if self.characteristics & Self::IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP != 0 {
+      flags.push("REMOVABLE_RUN_FROM_SWAP");
+    }
+    if self.characteristics & Self::IMAGE_FILE_NET_RUN_FROM_SWAP != 0 {
+      flags.push("NET_RUN_FROM_SWAP");
+    }
+    if self.characteristics & Self::IMAGE_FILE_SYSTEM != 0 {
+      flags.push("SYSTEM");
+    }
+    if self.characteristics & Self::IMAGE_FILE_DLL != 0 {
+      flags.push("DLL");
+    }
+    if self.characteristics & Self::IMAGE_FILE_UP_SYSTEM_ONLY != 0 {
+      flags.push("UP_SYSTEM_ONLY");
+    }
+    if self.characteristics & Self::IMAGE_FILE_BYTES_REVERSED_HI != 0 {
+      flags.push("BYTES_REVERSED_HI");
+    }
+    
+    flags
+  }
+
+  pub fn characteristics_string(&self) -> String {
+    let flags = self.characteristics();
+    if flags.is_empty() {
+      "None".to_string()
+    } else {
+      flags.join(" | ")
+    }
+  }
+
+  pub fn is_executable(&self) -> bool {
+    self.characteristics & Self::IMAGE_FILE_EXECUTABLE_IMAGE != 0
+  }
+
+  pub fn is_dll(&self) -> bool {
+    self.characteristics & Self::IMAGE_FILE_DLL != 0
+  }
+
+  pub fn is_system_file(&self) -> bool {
+    self.characteristics & Self::IMAGE_FILE_SYSTEM != 0
+  }
+
+  pub fn is_large_address_aware(&self) -> bool {
+    self.characteristics & Self::IMAGE_FILE_LARGE_ADDRESS_AWARE != 0
+  }
+
+  pub fn is_32bit_machine(&self) -> bool {
+    self.characteristics & Self::IMAGE_FILE_32BIT_MACHINE != 0
   }
 }
