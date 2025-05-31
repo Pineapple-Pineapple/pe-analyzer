@@ -1,11 +1,11 @@
+use super::structures::{CoffHeader, DosHeader, OptionalHeader};
 use crate::error::{PeError, Result};
-use super::structures::{ CoffHeader, DosHeader, OptionalHeader };
 
 pub struct PeFile {
   pub data: Vec<u8>,
   pub dos_header: DosHeader,
   pub coff_header: CoffHeader,
-  pub optional_header: OptionalHeader
+  pub optional_header: OptionalHeader,
 }
 
 impl PeFile {
@@ -31,15 +31,10 @@ impl PeFile {
 
     let optional_magic = u16::from_le_bytes([data[optional_start], data[optional_start + 1]]);
     let is_64_bit = optional_magic == 0x20B;
-    
+
     let optional_header = OptionalHeader::parse(&data[optional_start..], is_64_bit)?;
 
-    Ok(PeFile { 
-      data,
-      dos_header,
-      coff_header,
-      optional_header
-    })
+    Ok(PeFile { data, dos_header, coff_header, optional_header })
   }
 
   pub fn from_file(path: &str) -> Result<Self> {

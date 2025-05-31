@@ -1,5 +1,58 @@
 use crate::error::{PeError, Result};
-use std::mem;
+use std::{mem, time};
+
+pub fn relative_time(timestamp: u64, short: bool, len: u8) -> Result<String> {
+  if len > 7 {
+    return Err(PeError::InvalidArguments("Not enough units (len <= 7)".to_string()));
+  }
+
+  let now = time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_secs();
+  let diff =
+    if timestamp < now { now.saturating_sub(timestamp) } else { timestamp.saturating_sub(now) };
+  let past = timestamp <= now;
+
+  let units = [
+    (60 * 60 * 24 * 7 * 30 * 12, "years", "y"),
+    (60 * 60 * 24 * 7 * 30, "months", "M"),
+    (60 * 60 * 24 * 7, "weeks", "w"),
+    (60 * 60 * 24, "days", "d"),
+    (60 * 60, "hours", "h"),
+    (60, "minute", "m"),
+    (1, "second", "s"),
+  ];
+
+  let mut remaining = diff;
+  let mut parts = Vec::new();
+
+  for (secs, l_unit, s_unit) in units.iter() {
+    if parts.len() as u8 >= len {
+      break;
+    }
+
+    let count = remaining / secs;
+    if count > 0 {
+      remaining %= secs;
+      let part = if short {
+        format!("{}{}", count, s_unit)
+      } else {
+        format!("{} {}{}", count, l_unit, if count > 1 { "s" } else { "" })
+      };
+      parts.push(part);
+    }
+  }
+
+  if parts.len() == 0 {
+    if short {
+      return Ok("0s".to_string());
+    } else {
+      return Ok("0 seconds".to_string());
+    }
+  }
+
+  let joined = parts.join(if short { " " } else { ", " });
+
+  Ok(if past { format!("{} ago", joined) } else { format!("in {}", joined) })
+}
 
 pub struct BinaryReader<'a> {
   data: &'a [u8],
