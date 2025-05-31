@@ -1,10 +1,11 @@
 use crate::error::{PeError, Result};
-use super::structures::{ DosHeader, CoffHeader };
+use super::structures::{ CoffHeader, DosHeader, OptionalHeader };
 
 pub struct PeFile {
   pub data: Vec<u8>,
   pub dos_header: DosHeader,
-  pub coff_header: CoffHeader
+  pub coff_header: CoffHeader,
+  pub optional_header: OptionalHeader
 }
 
 impl PeFile {
@@ -23,10 +24,21 @@ impl PeFile {
     let coff_start = pe_offset + 4;
     let coff_header = CoffHeader::parse(&data[coff_start..])?;
 
+    let optional_start = coff_start + CoffHeader::SIZE;
+    if optional_start + 2 > data.len() {
+      return Err(PeError::CorruptedFile("Cannot read Option Header magic".to_string()));
+    }
+
+    let optional_magic = u16::from_le_bytes([data[optional_start], data[optional_start + 1]]);
+    let is_64_bit = optional_magic == 0x20B;
+    
+    let optional_header = OptionalHeader::parse(&data[optional_start..], is_64_bit)?;
+
     Ok(PeFile { 
       data,
       dos_header,
-      coff_header
+      coff_header,
+      optional_header
     })
   }
 

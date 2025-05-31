@@ -7,7 +7,8 @@ pub struct Args {
   pub verbose: bool,
   pub show_help: bool,
   pub show_dos: bool,
-  pub show_coff: bool
+  pub show_coff: bool,
+  pub show_optional_header: bool
 }
 
 impl Args {
@@ -23,6 +24,7 @@ impl Args {
     let mut show_help = false;
     let mut show_dos = false;
     let mut show_coff = false;
+    let mut show_optional_header = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -31,6 +33,7 @@ impl Args {
         | "--verbose" | "-v" => verbose = true,
         | "--dos" => show_dos = true,
         | "--coff" => show_coff = true,
+        | "--optional" => show_optional_header = true,
         | arg if arg.starts_with("-") => {
           return Err(PeError::InvalidArguments(format!("Unknown option: {}", arg)));
         }
@@ -46,14 +49,14 @@ impl Args {
     }
 
     if show_help {
-      return Ok(Args { file_path: String::new(), verbose, show_help, show_dos, show_coff });
+      return Ok(Args { file_path: String::new(), verbose, show_help, show_dos, show_coff, show_optional_header });
     }
 
     if file_path.is_empty() {
       return Err(PeError::InvalidArguments("No file specified".to_string()));
     }
 
-    Ok(Args { file_path, verbose, show_help, show_dos, show_coff })
+    Ok(Args { file_path, verbose, show_help, show_dos, show_coff, show_optional_header })
   }
 }
 
@@ -85,6 +88,7 @@ impl Cli {
     println!("    -v, --verbose    Enable verbose output");
     println!("    --dos            Show DOS Header");
     println!("    --coff           Show COFF File Header");
+    println!("    --optional       Show Optional Header");
     println!();
     println!("EXAMPLES:");
     println!("    pe-analyzer example.exe");
@@ -95,6 +99,8 @@ impl Cli {
       println!("{:#0X?}", pe_file.dos_header);
     } else if args.show_coff {
       println!("{:#0X?}", pe_file.coff_header);
+    } else if args.show_optional_header {
+      println!("{:#0X?}", pe_file.optional_header);
     }
     
     Ok(())
