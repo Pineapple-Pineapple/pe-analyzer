@@ -273,7 +273,6 @@ impl CoffHeader {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct OptionalHeader {
   pub magic: u16,
   pub major_linker_version: u8,
@@ -310,7 +309,6 @@ pub struct OptionalHeader {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct DataDirectory {
   pub virtual_address: u32,
   pub size: u32,
@@ -548,5 +546,395 @@ impl OptionalHeader {
         }
       })
       .collect()
+  }
+
+  pub fn get_import_table_rva(&self) -> Option<u32> {
+    if self.image_data_directory.len() > 1 {
+      let import_dir = &self.image_data_directory[1];
+      if import_dir.virtual_address != 0 { Some(import_dir.virtual_address) } else { None }
+    } else {
+      None
+    }
+  }
+
+  pub fn get_bound_import_table_rva(&self) -> Option<u32> {
+    if self.image_data_directory.len() > 11 {
+      let bound_import_dir = &self.image_data_directory[11];
+      if bound_import_dir.virtual_address != 0 {
+        Some(bound_import_dir.virtual_address)
+      } else {
+        None
+      }
+    } else {
+      None
+    }
+  }
+}
+
+pub struct ImageImportDescriptor {
+  pub original_first_thunk: u32, // RVA of ILT
+  pub time_date_stamp: u32,
+  pub forwarder_chain: u32,
+  pub name: u32,        // RVA of dll name
+  pub first_thunk: u32, // RVA of IAT
+}
+
+pub struct ImportByName {
+  pub hint: u16,
+  pub name: String,
+}
+
+pub struct ImportedFunction {
+  pub name: String,
+  pub hint: u16,
+  pub ordinal: Option<u16>,
+  pub is_ordinal_import: bool,
+}
+
+pub struct ImportedDll {
+  pub name: String,
+  pub functions: Vec<ImportedFunction>,
+  pub time_date_stamp: u32,
+  pub forwarder_chain: u32,
+  pub is_bound_import: bool,
+  pub ilt_rva: u32, // RVA of ILT
+  pub iat_rva: u32, // RVA of IAT
+}
+
+pub struct ImageBoundImportDescriptor {
+  pub time_date_stamp: u32,
+  pub offset_module_name: u16,
+  pub number_of_module_forwarder_refs: u16,
+}
+
+impl ImageImportDescriptor {
+  pub fn parse(data: &[u8], offset: usize) -> Result<Self> {
+    if data.len() < offset + 20 {
+      return Err(PeError::InvalidHeader("Image Import Descriptor too small".to_string()));
+    }
+
+    let mut reader = BinaryReader::new(&data[offset..]);
+
+    Ok(ImageImportDescriptor {
+      original_first_thunk: reader.read_u32()?,
+      time_date_stamp: reader.read_u32()?,
+      forwarder_chain: reader.read_u32()?,
+      name: reader.read_u32()?,
+      first_thunk: reader.read_u32()?,
+    })
+  }
+
+  pub fn is_null(&self) -> bool {
+    self.original_first_thunk == 0
+      && self.time_date_stamp == 0
+      && self.forwarder_chain == 0
+      && self.name == 0
+      && self.first_thunk == 0
+  }
+
+  pub fn is_bound(&self) -> bool {
+    self.time_date_stamp == 0xFFFFFFFF
+  }
+}
+
+impl ImportByName {
+  pub fn parse(data: &[u8], offset: usize) -> Result<Self> {
+    if data.len() < offset + 2 {
+      return Err(PeError::InvalidHeader("Import By Name too small".to_string()));
+    }
+
+    let mut reader = BinaryReader::new(&data[offset..]);
+    let hint = reader.read_u16()?;
+    let name = reader.read_cstring(data.len())?;
+    if name.is_empty() {
+      return Err(PeError::InvalidHeader("Import By Name has no name".to_string()));
+    }
+
+    Ok(ImportByName { hint, name })
+  }
+}
+
+pub struct ImportParser<'a> {
+  data: &'a [u8],
+  sections: &'a [SectionHeader],
+  is_64_bit: bool,
+}
+
+pub struct SectionHeader {
+  pub name: String,
+  pub virtual_size: u32,
+  pub virtual_address: u32,
+  pub size_of_raw_data: u32,
+  pub pointer_to_raw_data: u32,
+  pub pointer_to_relocations: u32,
+  pub pointer_to_line_numbers: u32,
+  pub number_of_relocations: u16,
+  pub number_of_line_numbers: u16,
+  pub characteristics: u32,
+}
+
+impl SectionHeader {
+  pub const SIZE: usize = 40;
+
+  pub fn parse(data: &[u8], offset: usize) -> Result<Self> {
+    if data.len() < offset + Self::SIZE {
+      return Err(PeError::InvalidHeader("Section header too small".to_string()));
+    }
+
+    let mut reader = BinaryReader::new(&data[offset..]);
+
+    let name_bytes = reader.read_bytes(8)?;
+    let name = String::from_utf8_lossy(name_bytes).trim_end_matches('\0').to_string();
+
+    Ok(SectionHeader {
+      name,
+      virtual_size: reader.read_u32()?,
+      virtual_address: reader.read_u32()?,
+      size_of_raw_data: reader.read_u32()?,
+      pointer_to_raw_data: reader.read_u32()?,
+      pointer_to_relocations: reader.read_u32()?,
+      pointer_to_line_numbers: reader.read_u32()?,
+      number_of_relocations: reader.read_u16()?,
+      number_of_line_numbers: reader.read_u16()?,
+      characteristics: reader.read_u32()?,
+    })
+  }
+
+  pub fn get_characteristics_list(&self, human_readable: bool) -> Vec<&str> {
+    let flags = [
+      (
+        0x00000008,
+        "IMAGE_SCN_TYPE_NO_PAD",
+        "The section should not be padded to the next boundary. This flag is obsolete and is replaced by IMAGE_SCN_ALIGN_1BYTES.",
+      ),
+      (0x00000020, "IMAGE_SCN_CNT_CODE", "The section contains executable code."),
+      (0x00000040, "IMAGE_SCN_CNT_INITIALIZED_DATA", "The section contains initialized data."),
+      (0x00000080, "IMAGE_SCN_CNT_UNINITIALIZED_DATA", "The section contains uninitialized data."),
+      (0x00000100, "IMAGE_SCN_LNK_OTHER", "Reserved."),
+      (
+        0x00000200,
+        "IMAGE_SCN_LNK_INFO",
+        "The section contains comments or other information. This is valid only for object files.",
+      ),
+      (
+        0x00000400,
+        "IMAGE_SCN_LNK_REMOVE",
+        "The section will not become part of the image. This is valid only for object files.",
+      ),
+      (
+        0x00001000,
+        "IMAGE_SCN_LNK_COMDAT",
+        "The section contains COMDAT data. This is valid only for object files.",
+      ),
+      (
+        0x00004000,
+        "IMAGE_SCN_NO_DEFER_SPEC_EXC",
+        "Reset speculative exceptions handling bits in the TLB entries for this section.",
+      ),
+      (
+        0x00008000,
+        "IMAGE_SCN_GPREL",
+        "The section contains data referenced through the global pointer.",
+      ),
+      (0x00020000, "IMAGE_SCN_MEM_PURGEABLE", "Reserved. (IMAGE_SCN_MEM_PURGEABLE)"),
+      (0x00040000, "IMAGE_SCN_MEM_LOCKED", "Reserved. (IMAGE_SCN_MEM_LOCKED)"),
+      (0x00080000, "IMAGE_SCN_MEM_PRELOAD", "Reserved. (IMAGE_SCN_MEM_PRELOAD)"),
+      (
+        0x00100000,
+        "IMAGE_SCN_ALIGN_1BYTES",
+        "Align data on a 1-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x00200000,
+        "IMAGE_SCN_ALIGN_2BYTES",
+        "Align data on a 2-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x00300000,
+        "IMAGE_SCN_ALIGN_4BYTES",
+        "Align data on a 4-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x00400000,
+        "IMAGE_SCN_ALIGN_8BYTES",
+        "Align data on an 8-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x00500000,
+        "IMAGE_SCN_ALIGN_16BYTES",
+        "Align data on a 16-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x00600000,
+        "IMAGE_SCN_ALIGN_32BYTES",
+        "Align data on a 32-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x00700000,
+        "IMAGE_SCN_ALIGN_64BYTES",
+        "Align data on a 64-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x00800000,
+        "IMAGE_SCN_ALIGN_128BYTES",
+        "Align data on a 128-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x00900000,
+        "IMAGE_SCN_ALIGN_256BYTES",
+        "Align data on a 256-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x00A00000,
+        "IMAGE_SCN_ALIGN_512BYTES",
+        "Align data on a 512-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x00B00000,
+        "IMAGE_SCN_ALIGN_1024BYTES",
+        "Align data on a 1024-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x00C00000,
+        "IMAGE_SCN_ALIGN_2048BYTES",
+        "Align data on a 2048-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x00D00000,
+        "IMAGE_SCN_ALIGN_4096BYTES",
+        "Align data on a 4096-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x00E00000,
+        "IMAGE_SCN_ALIGN_8192BYTES",
+        "Align data on an 8192-byte boundary. This is valid only for object files.",
+      ),
+      (
+        0x01000000,
+        "IMAGE_SCN_LNK_NRELOC_OVFL",
+        "The section contains extended relocations. The count of relocations for the section exceeds the 16 bits that is reserved for it in the section header. If the NumberOfRelocations field in the section header is 0xffff, the actual relocation count is stored in the VirtualAddress field of the first relocation. It is an error if IMAGE_SCN_LNK_NRELOC_OVFL is set and there are fewer than 0xffff relocations in the section.",
+      ),
+      (0x02000000, "IMAGE_SCN_MEM_DISCARDABLE", "The section can be discarded."),
+      (0x04000000, "IMAGE_SCN_MEM_NOT_CACHED", "The section cannot be cached."),
+      (0x08000000, "IMAGE_SCN_MEM_NOT_PAGED", "The section cannot be paged."),
+      (0x10000000, "IMAGE_SCN_MEM_SHARED", "The section can be shared in memory."),
+      (0x20000000, "IMAGE_SCN_MEM_EXECUTE", "The section can be executed as code."),
+      (0x40000000, "IMAGE_SCN_MEM_READ", "The section can be read."),
+      (0x80000000, "IMAGE_SCN_MEM_WRITE", "The section can be written to."),
+    ];
+
+    flags
+      .iter()
+      .filter_map(|(flag, name, desc)| {
+        if self.characteristics & flag != 0 {
+          Some(if human_readable { *desc } else { *name })
+        } else {
+          None
+        }
+      })
+      .collect()
+  }
+}
+
+impl<'a> ImportParser<'a> {
+  pub fn new(data: &'a [u8], sections: &'a [SectionHeader], is_64_bit: bool) -> Self {
+    Self { data, sections, is_64_bit }
+  }
+
+  pub fn rva_to_file_offset(&self, rva: u32) -> Result<usize> {
+    for section in self.sections {
+      let section_start = section.virtual_address;
+      let section_end = section_start + section.virtual_size;
+
+      if rva >= section_start && rva < section_end {
+        let offset_in_section = rva - section_start;
+        let file_offset = (section.pointer_to_raw_data + offset_in_section) as usize;
+
+        if offset_in_section >= section.size_of_raw_data {
+          return Err(PeError::InvalidHeader(format!(
+            "RVA 0x{:08X} exceeds section raw data size",
+            rva
+          )));
+        }
+
+        return Ok(file_offset);
+      }
+    }
+    Err(PeError::InvalidHeader(format!("RVA 0x{:08X} not found in any section", rva)))
+  }
+
+  fn parse_ilt_entry(&self, entry_value: u64) -> Result<ImportedFunction> {
+    let ordinal_flag = if self.is_64_bit { 0x8000000000000000 } else { 0x80000000 };
+
+    if entry_value & ordinal_flag != 0 {
+      // Import by ordinal
+      let ordinal = (entry_value & 0xFFFF) as u16;
+      Ok(ImportedFunction {
+        name: String::new(),
+        hint: 0,
+        ordinal: Some(ordinal),
+        is_ordinal_import: true,
+      })
+    } else {
+      let rva = (entry_value & 0x7FFFFFFF) as u32;
+      let offset = self.rva_to_file_offset(rva)?;
+      let import_by_name = ImportByName::parse(self.data, offset)?;
+
+      Ok(ImportedFunction {
+        name: import_by_name.name,
+        hint: import_by_name.hint,
+        ordinal: None,
+        is_ordinal_import: false,
+      })
+    }
+  }
+
+  fn parse_import_table(&self, table_rva: u32) -> Result<Vec<ImportedFunction>> {
+    let mut functions = Vec::new();
+    let table_offset = self.rva_to_file_offset(table_rva)?;
+    let mut reader = BinaryReader::new(&self.data[table_offset..]);
+
+    loop {
+      let entry_value = if self.is_64_bit { reader.read_u64()? } else { reader.read_u32()? as u64 };
+
+      if entry_value == 0 {
+        break;
+      }
+
+      let function = self.parse_ilt_entry(entry_value)?;
+      functions.push(function);
+    }
+
+    Ok(functions)
+  }
+
+  pub fn parse_imports(&self, import_descriptor: &ImageImportDescriptor) -> Result<ImportedDll> {
+    let dll_name_offset = self.rva_to_file_offset(import_descriptor.name)?;
+    let dll_name = BinaryReader::new(&self.data[dll_name_offset..])
+      .read_cstring(256)?
+      .trim_end_matches('\0')
+      .to_string();
+
+    if dll_name.is_empty() {
+      return Err(PeError::InvalidHeader("DLL name is empty".to_string()));
+    }
+
+    let functions = if import_descriptor.original_first_thunk != 0 {
+      self.parse_import_table(import_descriptor.original_first_thunk)?
+    } else if import_descriptor.first_thunk != 0 {
+      self.parse_import_table(import_descriptor.first_thunk)? // fallback
+    } else {
+      Vec::new()
+    };
+
+    Ok(ImportedDll {
+      name: dll_name,
+      functions,
+      time_date_stamp: import_descriptor.time_date_stamp,
+      forwarder_chain: import_descriptor.forwarder_chain,
+      is_bound_import: import_descriptor.is_bound(),
+      ilt_rva: import_descriptor.original_first_thunk,
+      iat_rva: import_descriptor.first_thunk,
+    })
   }
 }

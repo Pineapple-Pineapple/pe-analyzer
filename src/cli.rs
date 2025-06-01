@@ -10,6 +10,8 @@ pub struct Args {
   pub show_dos: bool,
   pub show_coff: bool,
   pub show_optional_header: bool,
+  pub show_sections: bool,
+  pub show_imports: bool,
 }
 
 impl Args {
@@ -26,6 +28,8 @@ impl Args {
     let mut show_dos = false;
     let mut show_coff = false;
     let mut show_optional_header = false;
+    let mut show_sections = false;
+    let mut show_imports = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -35,6 +39,15 @@ impl Args {
         | "--dos" => show_dos = true,
         | "--coff" => show_coff = true,
         | "--optional" => show_optional_header = true,
+        | "--sections" => show_sections = true,
+        | "--imports" => show_imports = true,
+        | "--all" => {
+          show_dos = true;
+          show_coff = true;
+          show_optional_header = true;
+          show_sections = true;
+          show_imports = true;
+        },
         | arg if arg.starts_with("-") => {
           return Err(PeError::InvalidArguments(format!("Unknown option: {}", arg)));
         }
@@ -57,6 +70,8 @@ impl Args {
         show_dos,
         show_coff,
         show_optional_header,
+        show_sections,
+        show_imports,
       });
     }
 
@@ -64,7 +79,16 @@ impl Args {
       return Err(PeError::InvalidArguments("No file specified".to_string()));
     }
 
-    Ok(Args { file_path, verbose, show_help, show_dos, show_coff, show_optional_header })
+    Ok(Args { 
+      file_path, 
+      verbose, 
+      show_help, 
+      show_dos, 
+      show_coff, 
+      show_optional_header,
+      show_sections,
+      show_imports,
+    })
   }
 }
 
@@ -97,9 +121,14 @@ impl Cli {
     println!("    --dos            Show DOS Header");
     println!("    --coff           Show COFF File Header");
     println!("    --optional       Show Optional Header");
+    println!("    --sections       Show Section Headers");
+    println!("    --imports        Show Import Table");
+    println!("    --all            Show all sections");
     println!();
     println!("EXAMPLES:");
     println!("    pe-analyzer example.exe");
+    println!("    pe-analyzer --imports example.exe");
+    println!("    pe-analyzer --all example.exe");
   }
 
   fn display(pe_file: &PeFile, args: &Args) -> Result<()> {
@@ -113,6 +142,12 @@ impl Cli {
     }
     if args.show_optional_header {
       Self::display_optional_header(&pe_file)?;
+    }
+    if args.show_sections {
+      Self::display_sections(&pe_file)?;
+    }
+    if args.show_imports {
+      Self::display_imports(&pe_file)?;
     }
 
     Ok(())
@@ -134,6 +169,10 @@ impl Cli {
     println!("   DOS Header Offset: 0x00000000");
     println!("   PE Header Offset: 0x{:08X}", pe_file.dos_header.e_lfanew);
     println!("   Number of Sections: {}", pe_file.coff_header.number_of_sections);
+    if pe_file.has_imports() {
+      println!("   Imported DLLs: {}", pe_file.imported_dlls.len());
+      println!("   Total Imported Functions: {}", pe_file.get_total_imported_functions());
+    }
     println!();
 
     println!("📅 Compilation Info:");
@@ -318,6 +357,79 @@ impl Cli {
           dir.name, dir.idx, dir.virtual_address, dir.size
         );
       }
+    }
+
+    Ok(())
+  }
+
+  fn display_sections(pe_file: &PeFile) -> Result<()> {
+    println!("\nSection Headers");
+    println!("===============");
+    
+    if pe_file.section_headers.is_empty() {
+      println!("No sections found.");
+      return Ok(());
+    }
+
+    for (i, section) in pe_file.section_headers.iter().enumerate() {
+      println!("Section {} - {}", i + 1, section.name);
+      println!("   Virtual Address: 0x{:08X}", section.virtual_address);
+      println!("   Virtual Size: {} bytes (0x{:X})", section.virtual_size, section.virtual_size);
+      println!("   Raw Data Offset: 0x{:08X}", section.pointer_to_raw_data);
+      println!("   Raw Data Size: {} bytes (0x{:X})", section.size_of_raw_data, section.size_of_raw_data);
+      println!("   Characteristics: 0x{:08X}", section.characteristics);
+      
+      let characteristics = section.get_characteristics_list(true);
+      if !characteristics.is_empty() {
+        println!("   Flags:");
+        for flag in characteristics {
+          println!("     • {}", flag);
+        }
+      }
+      println!();
+    }
+
+    Ok(())
+  }
+
+  fn display_imports(pe_file: &PeFile) -> Result<()> {
+    println!("\nImport Table");
+    println!("============");
+    
+    if pe_file.imported_dlls.is_empty() {
+      println!("No imports found.");
+      return Ok(());
+    }
+
+    println!("Total DLLs: {}", pe_file.imported_dlls.len());
+    println!("Total Functions: {}", pe_file.get_total_imported_functions());
+    println!();
+
+    for (i, dll) in pe_file.imported_dlls.iter().enumerate() {
+      println!("DLL {} - {}", i + 1, dll.name);
+      println!("   Functions: {}", dll.functions.len());
+      println!("   ILT RVA: 0x{:08X}", dll.ilt_rva);
+      println!("   IAT RVA: 0x{:08X}", dll.iat_rva);
+      
+      if dll.time_date_stamp != 0 {
+        println!("   Timestamp: 0x{:08X}", dll.time_date_stamp);
+      }
+      
+      if dll.is_bound_import {
+        println!("   ⚠️  Bound Import");
+      }
+      
+      if !dll.functions.is_empty() {
+        println!("   Functions:");
+        for (j, func) in dll.functions.iter().enumerate() {
+          if func.is_ordinal_import {
+            println!("     {}. Ordinal #{}", j + 1, func.ordinal.unwrap_or(0));
+          } else {
+            println!("     {}. {} (Hint: {})", j + 1, func.name, func.hint);
+          }
+        }
+      }
+      println!();
     }
 
     Ok(())
